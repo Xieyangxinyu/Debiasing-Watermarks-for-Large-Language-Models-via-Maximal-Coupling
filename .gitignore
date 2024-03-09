@@ -2,3 +2,7 @@ run*
 .env/
 __pycache__
 output/
+HC_simulate_data/
+*.sh
+blog*
+data/blog*

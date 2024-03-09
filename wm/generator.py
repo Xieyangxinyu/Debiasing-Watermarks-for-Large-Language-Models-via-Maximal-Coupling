@@ -242,7 +242,7 @@ class ImportanceGenerator(WmGenerator):
     """ Generate text using LM and the watemrarking method based on Importance Sampling. """
     def __init__(self, 
             *args, 
-            gamma: float = 0.1,
+            gamma: float = 0.5,
             **kwargs
         ):
         super().__init__(*args, **kwargs)        

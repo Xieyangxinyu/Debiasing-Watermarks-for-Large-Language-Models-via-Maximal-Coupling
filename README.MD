@@ -26,14 +26,14 @@ python convert_data.py --prompt_path data/longform_qa
 
 ## Usage
 You can reproduce the results of the paper by the following steps:
-1. Run the `adapt_watermark.py` file with the appropriate command-line arguments.
+1. Run the `main_watermark.py` file with the appropriate command-line arguments.
 <details>
-<summary><span style="font-weight: bold;">Command Line Arguments for adapt_watermark.py</span></summary>
+<summary><span style="font-weight: bold;">Command Line Arguments for main_watermark.py</span></summary>
     
 - `--model_name`: The name of the pre-trained model to use for text generation and analysis. Supported model names include "opt" and "llama".
 - `--prompt_path`: The path to the JSON file containing prompts. Default value: "data/alpaca_data.json."
 - `--method`: Choose a watermarking method for text generation. Options: "none" (no watermarking), "openai" (Aaronson et al.), "maryland" (Kirchenbauer et al.), "importance" which is our method. Default value: "none."
-- `--method_detect`: Choose a statistical test to detect watermark. "same" uses the grounded statistical test with the same method as for generation. The other options are "openai", "maryland", "importance", "importance-sum", "importance-squared". Default value: "same." For our proposed method, please use "importance-sum".
+- `--method_detect`: Choose a statistical test to detect watermark. "same" uses the grounded statistical test with the same method as for generation. The other options are "openai", "maryland", "importance-max", "importance-sum". Default value: "same." For our proposed method, please use "importance-sum".
 - `--one_list`: Use only a single green list; only works if detection method is importance-sum. See details in the Appendix of the paper.
 - `--scoring_method`: Method for scoring tokens. Options: "none" (score every token), "v1" (score token when the watermark context is unique), "v2" (score token when {wm context + token} is unique). Default value: "none." We use "v2" for all our experiments.
 - `--ngram`: Watermark context width for RNG key generation. Default value: 4. We use either 1 or 4 for all our experiments.
@@ -43,7 +43,7 @@ You can reproduce the results of the paper by the following steps:
 
 Here is an example:
 ```cmd
-python adapt_watermark.py --model_name opt \
+python main_watermark.py --model_name opt \
     --prompt_path data/finance_qa_opt.json --one_list \
     --method importance --method_detect importance-sum \
     --output_dir output/finance_qa/opt/importance_one_list/gamma_0.5_ngram_1 \
@@ -89,7 +89,7 @@ python main_eval.py --tokenizer opt --json_path output/longform_qa/opt/importanc
 - `--json_path`: The path to the folder containing the `results.jsonl` file. 
 - `--text_key`: We use "result" for all our experiments.
 - `--attack_name`: We use use "tok_substitution" for all our experiments.
-- `--method`: Choose a statistical test to detect watermark. "same" uses the grounded statistical test with the same method as for generation. The other options are "openai", "maryland", "importance", "importance-sum", "importance-squared". Default value: "same." For our proposed method, please use "importance-sum".
+- `--method`: Choose a statistical test to detect watermark. "same" uses the grounded statistical test with the same method as for generation. The other options are "openai", "maryland", "importance-max", "importance-sum", "importance-HC". For our proposed method, please use "importance-sum".
 - `--gamma`: Size of the green lists.
 - `--seeding`: We use "hash" for all our experiments.
 - `--ngram`: Watermark context width for RNG key generation. Default value: 4. We use either 1 or 4 for all our experiments.

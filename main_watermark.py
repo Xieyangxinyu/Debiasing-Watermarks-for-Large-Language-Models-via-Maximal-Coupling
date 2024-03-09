@@ -48,7 +48,7 @@ def get_args_parser():
     # prompts parameters
     parser.add_argument('--prompt_path', type=str, default="data/longform_qa.json")
     parser.add_argument('--prompt_type', type=str, default="alpaca", 
-                        help='type of prompt formatting. Choose between: alpaca, oasst, guanaco')
+                        help='type of prompt formatting. Choose between: alpaca, guanaco')
     parser.add_argument('--prompt', type=str, nargs='+', default=None, 
                         help='prompt to use instead of prompt_path, can be a list')
 
@@ -62,13 +62,13 @@ def get_args_parser():
     parser.add_argument('--method', type=str, default='none', 
                         help='Choose among: none (no watermarking), openai (Aaronson et al.), maryland (Kirchenbauer et al.), importance')
     parser.add_argument('--method_detect', type=str, default='same',
-                        help='Statistical test to detect watermark. Choose among: same (same as method), openai, maryland, importance, importance-sum, importance-squared')
+                        help='Statistical test to detect watermark. Choose among: openai, maryland, importance-max, importance-sum')
     parser.add_argument('--seeding', type=str, default='hash', 
                         help='seeding method for rng key generation as introduced in https://github.com/jwkirchenbauer/lm-watermarking')
     parser.add_argument('--ngram', type=int, default=4, 
                         help='watermark context width for rng key generation')
     parser.add_argument('--gamma', type=float, default=0.5, 
-                        help='gamma for maryland: proportion of greenlist tokens')
+                        help='gamma for maryland/importance: proportion of greenlist tokens')
     parser.add_argument('--delta', type=float, default=4.0, 
                         help='delta for maryland: bias to add to greenlist tokens')
     parser.add_argument('--hash_key', type=int, default=35317, 
@@ -256,7 +256,7 @@ def main(args):
 
     if args.method_detect == 'same':
         args.method_detect = args.method
-    if (not args.do_eval) or (args.method_detect not in ["openai", "maryland", "importance", "importance-sum", "importance-squared"]):
+    if (not args.do_eval) or (args.method_detect not in ["openai", "maryland", "importance-max", "importance-sum"]):
         return
     
     # build watermark detector
@@ -264,16 +264,14 @@ def main(args):
         detector = OpenaiDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
     elif args.method_detect == "maryland":
         detector = MarylandDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method_detect == "importance":
-        detector = ImportanceDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method_detect == "importance-sum":
+    elif args.method_detect == "importance-max":
+        detector = ImportanceMaxDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+    else:
         if args.one_list:
             detector = ImportanceSumDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
         else:
             detector = ImportanceSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method_detect == "importance-squared":
-        detector = ImportanceSquaredDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-
+    
     # build sbert model
     sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
     cossim = torch.nn.CosineSimilarity(dim=0, eps=1e-6)
@@ -296,11 +294,7 @@ def main(args):
     with open(os.path.join(args.output_dir, 'scores.jsonl'), 'w') as f:
         for text, text_orig, entropy, percent in tqdm.tqdm(zip(results, results_orig, entropies, percents)):
             # compute watermark score
-            if args.method_detect == "openainp":
-                scores_no_aggreg, probs = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
-                scores = detector.aggregate_scores(scores_no_aggreg) # p 1
-                pvalues = detector.get_pvalues(scores_no_aggreg, probs)
-            elif args.method_detect == "importance":
+            if args.method_detect == "importance-max":
                 scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
                 scores = detector.aggregate_scores(scores_no_aggreg, aggregation = 'max')
                 pvalues = detector.get_pvalues(scores_no_aggreg)

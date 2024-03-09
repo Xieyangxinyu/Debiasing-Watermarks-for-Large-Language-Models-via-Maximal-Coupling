@@ -11,8 +11,7 @@ from math import factorial
 from scipy.stats import norm, beta
 import torch
 from transformers import LlamaTokenizer
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import pickle
 
 class WmDetector():
     def __init__(self, 
@@ -223,7 +222,7 @@ class OpenaiDetector(WmDetector):
         return max(pvalue, eps)
     
 
-class ImportanceDetector(WmDetector):
+class ImportanceMaxDetector(WmDetector):
     def __init__(self, 
             tokenizer: LlamaTokenizer,
             ngram: int = 1,
@@ -239,9 +238,6 @@ class ImportanceDetector(WmDetector):
         """ 
         score = xi if token_id in greenlist else 1 - xi 
         The last line shifts the scores by token_id. 
-        ex: scores[0] = 1 if token_id in greenlist else 0
-            scores[1] = 1 if token_id in (greenlist shifted of 1) else 0
-            ...
         """
         seed = self.get_seed_rng(ngram_tokens)
         self.rng.manual_seed(seed)
@@ -267,7 +263,7 @@ class ImportanceDetector(WmDetector):
         """
         Get p-value for each text.
         Args:
-            score_lists: list of [list of score increments for each token] for each text
+            score_lists: list of [list of scores for each token] for each text
         Output:
             pvalues: np array of p-values for each text
         """
@@ -280,7 +276,7 @@ class ImportanceDetector(WmDetector):
         return np.asarray(pvalues)
     
 
-class ImportanceSumDetector(ImportanceDetector):
+class ImportanceSumDetector(ImportanceMaxDetector):
     def __init__(self, 
             tokenizer: LlamaTokenizer,
             ngram: int = 1,
@@ -295,94 +291,24 @@ class ImportanceSumDetector(ImportanceDetector):
     @staticmethod
     def irwin_hall_cdf(x, n):
         if n <= 15:
-            summands = 0
-            for k in range(0, int(x)+1):
-                summands += (-1)**k * special.comb(n, k) * (x-k)**n
-            cdf = summands / factorial(n)
+            k = np.arange(0, int(np.max(x)) + 1)[:, np.newaxis]
+            summands = np.sum((-1) ** k * special.comb(n, k) * (x - k.T) ** n, axis=0)
+            cdf = summands / np.math.factorial(n)
         else:
-            # use normal approximation
             cdf = norm.cdf(x, loc=n/2, scale=np.sqrt(n/12))
         return cdf
 
     def get_pvalue(self, score: float, ntoks: int, eps: float):
         pvalue = self.irwin_hall_cdf(score, ntoks)
-        return max(pvalue, eps)
+        return np.maximum(pvalue, eps)
     
-    def get_pvalues(
-            self, 
-            scores: List[np.array], 
-            eps: float=1e-200
-        ) -> np.array:
-        """
-        Get p-value for each text.
-        Args:
-            score_lists: list of [list of score increments for each token] for each text
-        Output:
-            pvalues: np array of p-values for each text
-        """
-        pvalues = []
-        scores = np.asarray(scores) # bsz x ntoks
-        for ss in scores:
-            ntoks = np.sum(ss > 0)
-            score = ss.sum() if ntoks!=0 else 1.
-            pvalues.append(self.get_pvalue(score, ntoks, eps=eps))
-        return np.asarray(pvalues)
-
-
-class ImportanceSquaredDetector(ImportanceDetector):
-    def __init__(self, 
-            tokenizer: LlamaTokenizer,
-            ngram: int = 1,
-            seed: int = 0,
-            seeding: str = 'hash',
-            salt_key: int = 35317,
-            gamma: float = 0.5, 
-            **kwargs):
-        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
-        self.gamma = gamma
-    
-    @staticmethod
-    def generalized_irwin_hall_cdf(x, n, sample_size=100000):
-        if n <= 100:
-            # Monte-Carlo estimate of the cdf
-            # Generate samples from Beta(1/2, 1)
-            beta_samples = beta.rvs(a=1/2, b=1, size=(sample_size, n))
-            
-            # Sum the squares of the samples
-            sum_beta_samples = np.sum(beta_samples, axis=1)
-            
-            # Calculate the proportion of sums that are less than the specified value
-            cdf = np.mean(sum_beta_samples < x)
-        else:
-            # use normal approximation
-            cdf = norm.cdf(x, loc=n/3, scale=np.sqrt(4*n/45))
-        return cdf
-
-
-    def get_pvalue(self, score: float, ntoks: int, eps: float):
-        pvalue = self.generalized_irwin_hall_cdf(score, ntoks)
-        return max(pvalue, eps)
-    
-    def get_pvalues(
-            self, 
-            scores: List[np.array], 
-            eps: float=1e-200
-        ) -> np.array:
-        """
-        Get p-value for each text.
-        Args:
-            score_lists: list of [list of score increments for each token] for each text
-        Output:
-            pvalues: np array of p-values for each text
-        """
-        pvalues = []
-        scores = np.asarray(scores) # bsz x ntoks
-        for ss in scores:
-            ntoks = np.sum(ss > 0)
-            score = (ss ** 2).sum() if ntoks!=0 else 1.
-            pvalues.append(self.get_pvalue(score, ntoks, eps=eps))
-        return np.asarray(pvalues)
-    
+    def get_pvalues(self, scores, eps: float=1e-200):
+        scores = np.array(scores)  # Ensure scores is a NumPy array
+        ntoks = np.sum(scores > 0, axis=1)[0]  # Number of tokens per text
+        total_scores = np.sum(scores, axis=1)  # Total score per text
+        total_scores[ntoks == 0] = 1.  # Handle case where ntoks == 0
+        pvalues = self.get_pvalue(total_scores, ntoks, eps)
+        return pvalues
 
 class ImportanceSumDetectorOneList(ImportanceSumDetector):
     def __init__(self, 
@@ -408,3 +334,76 @@ class ImportanceSumDetectorOneList(ImportanceSumDetector):
         scores += 1 - xi
         scores[greenlist] = xi
         return scores.roll(-token_id)
+    
+
+class ImportanceHCDetector(ImportanceSumDetector):
+    def __init__(self, 
+            tokenizer: LlamaTokenizer,
+            ngram: int = 1,
+            seed: int = 0,
+            seeding: str = 'hash',
+            salt_key: int = 35317,
+            gamma: float = 0.5,
+            **kwargs):
+        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
+        self.gamma = gamma
+        
+    @staticmethod
+    def HC_test(p):
+        """
+        Calculate the Higher Criticism (HC) threshold for a given set of p-values and determine
+        if the null hypothesis H_0 should be accepted or rejected based on the HC statistic.
+
+        Inputs:
+            p (array-like): An n-by-1 array of p-values from the data.
+
+        Outputs:
+            H (int): A scalar, "0" or "1", indicating whether H_0 is accepted ("0") or rejected ("1"),
+                    based on whether the HC threshold exceeds a critical value.
+        """
+        n_sample = len(p)
+        
+        # Sort P along the last axis (samples within each simulation)
+        P_sorted = np.sort(p)
+        
+        # Compute t/n for each possible t value, considering broadcasting
+        t_n = np.arange(1, n_sample + 1) / n_sample
+        
+        # Compute p_{(t)} - t/n for each p_{(t)} and corresponding t/n, again using broadcasting
+        difference = t_n - P_sorted
+        
+        # Compute the denominator for the HC statistic
+        denominator = np.sqrt(P_sorted * (1 - P_sorted))
+        
+        # Compute the HC+ statistic, avoiding division by zero and ensuring p_{(t)} > 1/n
+        # Use np.where to handle p_{(t)} > 1/n condition
+        valid_indices = P_sorted > 1/n_sample
+        HC_plus_values = np.where(valid_indices, np.sqrt(n_sample) * difference / denominator, 0)
+        
+        # Compute the max of HC+ values across the valid t values for each simulation
+        HC_plus = np.max(HC_plus_values)
+
+        file_path = f'HC_simulate_data/{n_sample}.pkl'
+        empirical_dist = pickle.load(open(file_path, 'rb'))
+
+        critical_value = empirical_dist['critical_value']
+
+        return HC_plus > critical_value
+
+    def get_decisions(
+            self, 
+            scores: List[np.array], 
+        ) -> np.array:
+        """
+        Get test decisions for each text.
+        Args:
+            score_lists: list of [list of scores for each token] for each text
+        Output:
+            decisions: list of test decisions
+        """
+        decisions = []
+        scores = np.asarray(scores)
+        for ss in scores:
+            ntoks = len(ss)
+            decisions.append(self.HC_test(ss) if ntoks!=0 else 0.)
+        return decisions

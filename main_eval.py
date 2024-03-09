@@ -46,7 +46,7 @@ def get_args_parser():
                         none (score every tokens), v1 (score token when wm context is unique), \
                         v2 (score token when {wm context + token} is unique')
     parser.add_argument('--one_list', default=False, action='store_true', help="uses only a single green list; only works if detection method is importance-sum")
-
+    parser.add_argument('--alpha', type=float, default=0.0001)
     
     # attack
     parser.add_argument('--attack_name', type=str, default='none',
@@ -79,6 +79,7 @@ def load_results(json_path: str, nsamples: int=None, text_key: str='result') -> 
     new_prompts = new_prompts[:nsamples]
     return new_prompts
 
+
 def main(args):
 
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
@@ -99,16 +100,15 @@ def main(args):
         detector = OpenaiDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
     elif args.method == "maryland":
         detector = MarylandDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method == "importance":
-        detector = ImportanceDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+    elif args.method == "importance-max":
+        detector = ImportanceMaxDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
     elif args.method == "importance-sum":
         if args.one_list:
             detector = ImportanceSumDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
         else:
             detector = ImportanceSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method == "importance-squared":
-        detector = ImportanceSquaredDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-
+    elif args.method == "importance-HC":
+        detector = ImportanceHCDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
 
     # load results and (optional) do splits
     results = load_results(json_path=f'{args.json_path}/results.jsonl', text_key=args.text_key, nsamples=args.nsamples)
@@ -144,29 +144,36 @@ def main(args):
             'text_index': ii,
         }
         if args.do_wmeval:
-            # compute watermark score
-            if args.method == "openainp":
-                scores_no_aggreg, probs = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
-                scores = detector.aggregate_scores(scores_no_aggreg) # p 1
-                pvalues = detector.get_pvalues(scores_no_aggreg, probs)
-            elif args.method == "importance":
+            if args.method == "importance-max":
                 scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
                 scores = detector.aggregate_scores(scores_no_aggreg, aggregation = 'max')
                 pvalues = detector.get_pvalues(scores_no_aggreg)
+            elif args.method == "importance-HC":
+                scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
+                decisions = detector.get_decisions(scores_no_aggreg)
             else:
                 scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
                 scores = detector.aggregate_scores(scores_no_aggreg) # p 1
                 pvalues = detector.get_pvalues(scores_no_aggreg) 
-            
-            scores = [float(s) for s in scores]
+
             num_tokens = [len(score_no_aggreg) for score_no_aggreg in scores_no_aggreg]
             log_stat['num_token'] =  num_tokens[0]
-            log_stat['score'] =  scores[0]
-            log_stat['pvalue'] =  pvalues[0]
-        log_stats.append(log_stat)
+            if args.method == "importance-HC":
+                log_stat['decision'] = decisions[0]
+            else:
+                scores = [float(s) for s in scores]
+                log_stat['score'] =  scores[0]
+                log_stat['pvalue'] =  pvalues[0]
+            log_stats.append(log_stat)
+    
+
+
     df = pd.DataFrame(log_stats)
-    TPR = sum(df['pvalue'] < 0.0001) / len(df)
-    print(f'TPR: {TPR}')
+    if args.method == "importance-HC":
+        TPR = sum(df['decision']) / len(df)
+    else:
+        TPR = sum(df['pvalue'] < args.alpha) / len(df)
+    print(f'TPR: {TPR} out of {len(df)} texts.')
 
 
 if __name__ == "__main__":

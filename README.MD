@@ -70,16 +70,22 @@ For `importance` methods, there are two additional fields:
 | `entropy` | The average entropy of the text |
 | `percentage_less_than_095` | The percent of $p^t(G)$'s below 0.95  |
 
-3. To compute the true positive rates (TPR), run `TPR.py`. For example,
+3. To compute the true positive rates (TPR), run `main_eval.py`. For example,
 ```
-python TPR.py --scores_path output/longform_qa/opt/importance/gamma_0.5_ngram_1
+python main_eval.py --tokenizer opt --json_path output/longform_qa/opt/importance_one_list/gamma_0.5_ngram_1 \
+    --text_key result --method importance-sum \
+    --gamma 0.5 --seeding hash --ngram 1 --scoring_method v2 --alpha 0.01
 ```
 
 4. To compute the true positive rates (TPR) after substitution attacks, run `main_eval.py` with the appropriate command-line arguments. For example,
 ```
 python main_eval.py --tokenizer opt --json_path output/longform_qa/opt/importance_one_list/gamma_0.5_ngram_1 \
     --text_key result --attack_name tok_substitution --method importance-sum \
-    --gamma 0.5 --seeding hash --ngram 1 --scoring_method v2
+    --gamma 0.5 --seeding hash --ngram 1 --scoring_method v2 --alpha 0.01
+
+python main_eval.py --tokenizer llama --json_path output/blogs/llama/importance/gamma_0.5_ngram_4 \
+    --text_key result  --attack_name tok_substitution --method importance-HC \
+    --gamma 0.5 --seeding hash --ngram 4 --scoring_method v2
 ```
 
 <details>
@@ -94,4 +100,7 @@ python main_eval.py --tokenizer opt --json_path output/longform_qa/opt/importanc
 - `--seeding`: We use "hash" for all our experiments.
 - `--ngram`: Watermark context width for RNG key generation. Default value: 4. We use either 1 or 4 for all our experiments.
 - `--scoring_method`: We use "v2" for all our experiments.
+- `--alpha`: The significance level used for the test. This is not supported for "importance-HC". See details for the higher criticism statistics below.
 </details>
+
+5. Since the decision boundary for higher criticism statistics is obtained from simulation, please check `HC_simulate.py` for pre-computing the decision boundaries at a specified significance level.

@@ -108,7 +108,10 @@ def main(args):
         else:
             detector = ImportanceSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
     elif args.method == "importance-HC":
-        detector = ImportanceHCDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+        if args.one_list:
+            detector = ImportanceHCDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+        else:
+            detector = ImportanceHCDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
 
     # load results and (optional) do splits
     results = load_results(json_path=f'{args.json_path}/results.jsonl', text_key=args.text_key, nsamples=args.nsamples)

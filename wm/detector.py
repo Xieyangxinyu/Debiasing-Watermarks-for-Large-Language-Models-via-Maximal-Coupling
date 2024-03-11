@@ -407,3 +407,28 @@ class ImportanceHCDetector(ImportanceSumDetector):
             ntoks = len(ss)
             decisions.append(self.HC_test(ss) if ntoks!=0 else 0.)
         return decisions
+    
+class ImportanceHCDetectorOneList(ImportanceHCDetector):
+    def __init__(self, 
+            tokenizer: LlamaTokenizer,
+            ngram: int = 1,
+            seed: int = 0,
+            seeding: str = 'hash',
+            salt_key: int = 35317,
+            gamma: float = 0.5, 
+            green_list_key: int = 42,
+            **kwargs):
+        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
+        self.gamma = gamma
+        self.rng.manual_seed(green_list_key)
+        self.green_list = torch.randperm(self.vocab_size, generator=self.rng)[:int(self.gamma * self.vocab_size)]# gamma * n
+    
+    def score_tok(self, ngram_tokens, token_id):
+        seed = self.get_seed_rng(ngram_tokens)
+        self.rng.manual_seed(seed)
+        xi = torch.rand(1, generator=self.rng)[0]
+        greenlist = self.green_list
+        scores = torch.zeros(self.vocab_size)
+        scores += 1 - xi
+        scores[greenlist] = xi
+        return scores.roll(-token_id)

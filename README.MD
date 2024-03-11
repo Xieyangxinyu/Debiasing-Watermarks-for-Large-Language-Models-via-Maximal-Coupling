@@ -104,3 +104,5 @@ python main_eval.py --tokenizer llama --json_path output/blogs/llama/importance/
 </details>
 
 5. Since the decision boundary for higher criticism statistics is obtained from simulation, please check `HC_simulate.py` for pre-computing the decision boundaries at a specified significance level.
+
+6. The code for simulation studies are included in `regime_1.py` and `regime_2.py`, corresponding to the two scenarios discussed in the paper.

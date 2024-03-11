@@ -5,4 +5,4 @@
 # LICENSE file in the root directory of this source tree.
 
 from .generator import WmGenerator, OpenaiGenerator, MarylandGenerator, ImportanceGenerator, ImportanceGeneratorOneList
-from .detector import WmDetector, OpenaiDetector, MarylandDetector, ImportanceMaxDetector, ImportanceSumDetector, ImportanceSquaredDetector, ImportanceSumDetectorOneList, ImportanceHCDetector
+from .detector import WmDetector, OpenaiDetector, MarylandDetector, ImportanceMaxDetector, ImportanceSumDetector, ImportanceSumDetectorOneList, ImportanceHCDetector, ImportanceHCDetectorOneList

@@ -254,7 +254,7 @@ class ImportanceGenerator(WmGenerator):
         ngram_tokens: torch.LongTensor, # (bsz, ngram): tokens to consider when seeding
         temperature: float = 0.8, # temperature for sampling
         top_p: float = 0.95, # top p for sampling
-        off: bool = False # whether to use off-policy sampling
+        off: bool = False # whether to turn off the watermarking
     ) -> torch.LongTensor:
         """
         From ngram tokens, select the next token based on the following:
@@ -266,7 +266,7 @@ class ImportanceGenerator(WmGenerator):
         if temperature > 0:
             probs = torch.softmax(logits / temperature, dim=-1)
 
-            # Top_k sampling
+            # Top_p sampling
             probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
             probs_sum = torch.cumsum(probs_sort, dim=-1)
             mask = probs_sum - probs_sort > top_p
@@ -323,10 +323,6 @@ class ImportanceGenerator(WmGenerator):
         temperature: float = 0.8,
         top_p: float = 0.95
     ) -> List[str]:
-        """
-        Generate text from prompts. 
-        Adapted from https://github.com/facebookresearch/LM/
-        """
         
         bsz = len(prompts)
         prompt_tokens = [self.tokenizer.encode(x, add_special_tokens=False) for x in prompts]
@@ -376,7 +372,7 @@ class ImportanceGeneratorOneList(ImportanceGenerator):
     """ Generate text using LM and the watemrarking method based on Importance Sampling. """
     def __init__(self, 
             *args, 
-            gamma: float = 0.1,
+            gamma: float = 0.5,
             green_list_key: int = 42,
             **kwargs
         ):
@@ -405,4 +401,131 @@ class ImportanceGeneratorOneList(ImportanceGenerator):
             green_mask[ii] = mask
         red_mask = 1 - green_mask
         return logits, green_mask, red_mask, xi
+
+
+class SpeculativeGenerator(ImportanceGenerator):
+    """ Generate text using LM and the watemrarking method based on Speculative Sampling. """
+    def __init__(self, 
+            *args, 
+            model_large: AutoModelForCausalLM = None,
+            **kwargs
+        ):
+        super().__init__(*args, **kwargs)        
+        self.model_large = model_large
+
+    def sample_next(
+        self,
+        logits: torch.FloatTensor, # (bsz, vocab_size): logits for last token
+        logits_large: torch.FloatTensor, # (bsz, vocab_size): logits for last token
+        ngram_tokens: torch.LongTensor, # (bsz, ngram): tokens to consider when seeding
+        temperature: float = 0.8, # temperature for sampling
+        top_p: float = 0.95, # top p for sampling
+        off: bool = False # whether to turn off the watermarking
+    ) -> torch.LongTensor:
+        """
+        From ngram tokens, select the next token based on the following:
+        - hash the ngram tokens and get a seed
+        - use the seed to partition the vocabulary into greenlist (gamma*V words) and redlist 
+        - choose which list to generate from based on the importance sampling random variable xi
+        """
+        logits, green_mask, _, xi = self.logits_processor(logits, ngram_tokens)
+        if temperature > 0:
+            probs = torch.softmax(logits / temperature, dim=-1)
+            probs_large = torch.softmax(logits_large / temperature, dim=-1)
+
+            # Top_p sampling
+            probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+            probs_sum = torch.cumsum(probs_sort, dim=-1)
+            mask = probs_sum - probs_sort > top_p
+            probs_sort[mask] = 0.0
+            probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+            # sort back to original vocab order
+            probs = torch.zeros_like(probs_sort)
+            probs.scatter_(dim=-1, index=probs_idx, src=probs_sort)
+
+            probs_sort_large, probs_idx_large = torch.sort(probs_large, dim=-1, descending=True)
+            probs_sum_large = torch.cumsum(probs_sort_large, dim=-1)
+            mask_large = probs_sum_large - probs_sort_large > top_p
+            probs_sort_large[mask_large] = 0.0
+            probs_sort_large.div_(probs_sort_large.sum(dim=-1, keepdim=True))
+            probs_large = torch.zeros_like(probs_sort_large)
+            probs_large.scatter_(dim=-1, index=probs_idx_large, src=probs_sort_large)
+
+            if off:
+                next_token = torch.multinomial(probs_large, num_samples=1)
+                next_token = next_token.reshape(-1)
+            else:
+                # add greenlist to probs
+                probs = probs * green_mask
+                probs.div_(probs.sum(dim=-1, keepdim=True))
+                probs[probs != probs] = 1e-10
+                probs.div_(probs.sum(dim=-1, keepdim=True))
+
+                # Compute P' = norm(max(0, P - Q))
+                probs_fix = torch.max(torch.zeros_like(probs), probs_large - probs)
+                probs_fix.div_(probs_fix.sum(dim=-1, keepdim=True))
+
+                probs_fix[probs_fix != probs_fix] = 1e-10
+                
+                # reject sampling
+                next_token = torch.multinomial(probs, num_samples=1) # one hot of next token, ordered by original probs
+
+                Q = torch.gather(probs, -1, next_token).sum(dim=-1)
+                P = torch.gather(probs_large, -1, next_token).sum(dim=-1)
+                reject_mask = xi * Q > P
+                next_token_reject = torch.multinomial(probs_fix, num_samples=1)
+                next_token = next_token.reshape(-1)
+                next_token_reject = next_token_reject.reshape(-1)
+                next_token[reject_mask] = next_token_reject[reject_mask]
+        else:
+            next_token = torch.argmax(logits_large, dim=-1)
+            next_token = next_token.reshape(-1)
+        return next_token
     
+    @torch.no_grad()
+    def generate(
+        self,
+        prompts: List[str],
+        max_gen_len: int,
+        temperature: float = 0.8,
+        top_p: float = 0.95,
+    ) -> List[str]:
+        
+        bsz = len(prompts)
+        prompt_tokens = [self.tokenizer.encode(x, add_special_tokens=False) for x in prompts]
+        min_prompt_size = min([len(t) for t in prompt_tokens])
+        max_prompt_size = max([len(t) for t in prompt_tokens])
+        total_len = min(self.max_seq_len, max_gen_len + max_prompt_size)
+
+        tokens = torch.full((bsz, total_len), self.pad_id).to(device).long()
+        for k, t in enumerate(prompt_tokens):
+            tokens[k, : len(t)] = torch.tensor(t).long()
+        input_text_mask = tokens != self.pad_id
+
+        start_pos = min_prompt_size
+        prev_pos = 0
+        for cur_pos in range(start_pos, total_len):
+            outputs = self.model.forward(
+                tokens[:, prev_pos:cur_pos], use_cache=True, past_key_values=outputs.past_key_values if prev_pos > 0 else None
+            )
+            outputs_large = self.model_large.forward(
+                tokens[:, prev_pos:cur_pos], use_cache=True, past_key_values=outputs_large.past_key_values if prev_pos > 0 else None
+            )
+
+            ngram_tokens = tokens[:, cur_pos-self.ngram:cur_pos]
+            next_toks = self.sample_next(outputs.logits[:, -1, :], outputs_large.logits[:, -1, :], ngram_tokens, temperature, top_p, off = (cur_pos < start_pos + self.ngram))
+            tokens[:, cur_pos] = torch.where(input_text_mask[:, cur_pos], tokens[:, cur_pos], next_toks)
+            prev_pos = cur_pos
+
+        decoded = []
+        for i, t in enumerate(tokens.tolist()):
+            # cut to max gen len
+            t = t[: len(prompt_tokens[i]) + max_gen_len]
+            # cut to eos tok if any
+            try:
+                t = t[: t.index(self.eos_id)]
+            except ValueError:
+                pass
+            decoded.append(self.tokenizer.decode(t))
+
+        return decoded

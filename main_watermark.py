@@ -178,6 +178,12 @@ def main(args):
             generator = ImportanceGeneratorOneList(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma)
         else:
             generator = ImportanceGenerator(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma)
+    elif args.method == "speculative":
+        if args.model_name == 'llama':
+            model_small = AutoModelForCausalLM.from_pretrained('princeton-nlp/Sheared-LLaMA-1.3B',device_map="auto").eval()
+        else:
+            model_small = AutoModelForCausalLM.from_pretrained('facebook/opt-350m',device_map="auto").eval()
+        generator = SpeculativeGenerator(model_small, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, model_large=model)
     else:
         raise NotImplementedError("method {} not implemented".format(args.method))
 
@@ -281,7 +287,7 @@ def main(args):
 
     # evaluate
     results = load_results(json_path=os.path.join(args.output_dir, f"results.jsonl"), nsamples=args.nsamples, result_key="result")
-    if "importance" in args.method_detect:
+    if "importance" in args.method:
         entropies = load_results(json_path=os.path.join(args.output_dir, f"results.jsonl"), 
                                        nsamples=args.nsamples, result_key="entropy")
         percents = load_results(json_path=os.path.join(args.output_dir, f"results.jsonl"), 

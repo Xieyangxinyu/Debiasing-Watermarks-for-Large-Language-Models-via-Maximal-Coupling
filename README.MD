@@ -82,10 +82,6 @@ python main_eval.py --tokenizer opt --json_path output/longform_qa/opt/importanc
 python main_eval.py --tokenizer opt --json_path output/longform_qa/opt/importance_one_list/gamma_0.5_ngram_1 \
     --text_key result --attack_name tok_substitution --method importance-sum \
     --gamma 0.5 --seeding hash --ngram 1 --scoring_method v2 --alpha 0.01
-
-python main_eval.py --tokenizer llama --json_path output/blogs/llama/importance/gamma_0.5_ngram_4 \
-    --text_key result  --attack_name tok_substitution --method importance-HC \
-    --gamma 0.5 --seeding hash --ngram 4 --scoring_method v2
 ```
 
 <details>

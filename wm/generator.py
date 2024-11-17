@@ -1,11 +1,3 @@
-'''
-Author: Yangxinyu Xie
-Date: 2024-11-07
-
-This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/generator.py and https://github.com/yihwu/dipmark
-'''
-
-
 from typing import List
 
 import torch

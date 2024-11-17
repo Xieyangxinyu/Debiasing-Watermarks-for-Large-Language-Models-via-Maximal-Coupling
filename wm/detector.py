@@ -1,21 +1,19 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
+"""
+Author: Yangxinyu Xie
+Date: 2024-11-07
 
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
+This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/detector.py and https://github.com/yihwu/dipmark
+"""
 
 from typing import List
 import numpy as np
 from scipy import special
-from math import factorial
-from scipy.stats import norm, beta
 import torch
-from transformers import LlamaTokenizer
-import pickle
+from transformers import AutoTokenizer
 
 class WmDetector():
     def __init__(self, 
-            tokenizer: LlamaTokenizer, 
+            tokenizer: AutoTokenizer, 
             ngram: int = 1,
             seed: int = 0,
             seeding: str = 'hash',
@@ -42,20 +40,39 @@ class WmDetector():
         """
         Seed RNG with hash of input_ids.
         Adapted from https://github.com/jwkirchenbauer/lm-watermarking
+        Modified to work with List[int] instead of torch.LongTensor
         """
+        # Define MAX_INT64 constant (equivalent to torch.iinfo(torch.int64).max)
+        MAX_INT64 = 9223372036854775807  # 2^63 - 1
+
         if self.seeding == 'hash':
-            seed = self.seed
+            seed = int(self.seed) & MAX_INT64  # Ensure initial seed is within bounds
             for i in input_ids:
-                seed = (seed * self.salt_key + i) % (2 ** 64 - 1)
+                # No need for .item() since input is already int
+                i_val = int(i) & MAX_INT64
+                salt = int(self.salt_key) & MAX_INT64
+                # Break down the calculation into smaller steps
+                # Use modulo at each step to prevent overflow
+                temp = (seed % MAX_INT64) * (salt % MAX_INT64)
+                temp = temp % MAX_INT64
+                temp = (temp + i_val) % MAX_INT64
+                seed = temp
+
         elif self.seeding == 'additive':
-            seed = self.salt_key * torch.sum(input_ids)
+            # Replace torch.sum with Python sum
+            seed = self.salt_key * sum(input_ids)
             seed = self.hashint(seed)
+
         elif self.seeding == 'skip':
+            # Simply use first element of the list
             seed = self.salt_key * input_ids[0]
             seed = self.hashint(seed)
+
         elif self.seeding == 'min':
-            seed = self.hashint(self.salt_key * input_ids)
-            seed = torch.min(seed)
+            # Replace torch.min with Python min
+            hashed = self.hashint(self.salt_key * np.array(input_ids))
+            seed = min(hashed)
+
         return seed
 
     def aggregate_scores(self, scores: List[List[np.array]], aggregation: str = 'mean') -> List[float]:
@@ -160,7 +177,7 @@ class WmDetector():
 class MarylandDetector(WmDetector):
 
     def __init__(self, 
-            tokenizer: LlamaTokenizer,
+            tokenizer: AutoTokenizer,
             ngram: int = 1,
             seed: int = 0,
             seeding: str = 'hash',
@@ -169,6 +186,11 @@ class MarylandDetector(WmDetector):
             **kwargs):
         super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
         self.gamma = gamma
+
+    def get_green_list(self):
+        vocab_permutation = torch.randperm(self.vocab_size, generator=self.rng)
+        greenlist = vocab_permutation[:int(self.gamma * self.vocab_size)] # gamma * n toks in the greenlist
+        return greenlist
     
     def score_tok(self, ngram_tokens, token_id):
         """ 
@@ -181,8 +203,7 @@ class MarylandDetector(WmDetector):
         seed = self.get_seed_rng(ngram_tokens)
         self.rng.manual_seed(seed)
         scores = torch.zeros(self.vocab_size)
-        vocab_permutation = torch.randperm(self.vocab_size, generator=self.rng)
-        greenlist = vocab_permutation[:int(self.gamma * self.vocab_size)] # gamma * n toks in the greenlist
+        greenlist = self.get_green_list()
         scores[greenlist] = 1 
         return scores.roll(-token_id) 
                 
@@ -191,10 +212,28 @@ class MarylandDetector(WmDetector):
         pvalue = special.betainc(score, 1 + ntoks - score, self.gamma)
         return max(pvalue, eps)
     
+
+class DiPMarkDetector(MarylandDetector):
+
+    def __init__(self, 
+            tokenizer: AutoTokenizer,
+            ngram: int = 1,
+            seed: int = 0,
+            seeding: str = 'hash',
+            salt_key: int = 35317,
+            gamma: float = 0.5, 
+            **kwargs):
+        super().__init__(tokenizer, ngram, seed, seeding, salt_key, gamma=gamma, **kwargs)
+
+    def get_green_list(self):
+        vocab_permutation = torch.randperm(self.vocab_size, generator=self.rng)
+        greenlist = vocab_permutation[int((1 - self.gamma) * self.vocab_size):] # gamma * n toks in the greenlist
+        return greenlist
+    
 class OpenaiDetector(WmDetector):
 
     def __init__(self, 
-            tokenizer: LlamaTokenizer, 
+            tokenizer: AutoTokenizer, 
             ngram: int = 1,
             seed: int = 0,
             seeding: str = 'hash',
@@ -222,213 +261,3 @@ class OpenaiDetector(WmDetector):
         return max(pvalue, eps)
     
 
-class ImportanceMaxDetector(WmDetector):
-    def __init__(self, 
-            tokenizer: LlamaTokenizer,
-            ngram: int = 1,
-            seed: int = 0,
-            seeding: str = 'hash',
-            salt_key: int = 35317,
-            gamma: float = 0.5, 
-            **kwargs):
-        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
-        self.gamma = gamma
-    
-    def score_tok(self, ngram_tokens, token_id):
-        """ 
-        score = xi if token_id in greenlist else 1 - xi 
-        The last line shifts the scores by token_id. 
-        """
-        seed = self.get_seed_rng(ngram_tokens)
-        self.rng.manual_seed(seed)
-        vocab_permutation = torch.randperm(self.vocab_size, generator=self.rng)
-        seed = self.get_seed_rng(ngram_tokens)
-        self.rng.manual_seed(seed)
-        xi = torch.rand(1, generator=self.rng)[0]
-        greenlist = vocab_permutation[:int(self.gamma * self.vocab_size)]
-        scores = torch.zeros(self.vocab_size)
-        scores += 1 - xi
-        scores[greenlist] = xi
-        return scores.roll(-token_id)
-                
-    def get_pvalue(self, score: float, ntoks: int, eps: float):
-        pvalue = score ** ntoks
-        return max(pvalue, eps)
-    
-    def get_pvalues(
-            self, 
-            scores: List[np.array], 
-            eps: float=1e-200
-        ) -> np.array:
-        """
-        Get p-value for each text.
-        Args:
-            score_lists: list of [list of scores for each token] for each text
-        Output:
-            pvalues: np array of p-values for each text
-        """
-        pvalues = []
-        scores = np.asarray(scores) # bsz x ntoks
-        for ss in scores:
-            ntoks = np.sum(ss > 0)
-            score = ss.max() if ntoks!=0 else 1.
-            pvalues.append(self.get_pvalue(score, ntoks, eps=eps))
-        return np.asarray(pvalues)
-    
-
-class ImportanceSumDetector(ImportanceMaxDetector):
-    def __init__(self, 
-            tokenizer: LlamaTokenizer,
-            ngram: int = 1,
-            seed: int = 0,
-            seeding: str = 'hash',
-            salt_key: int = 35317,
-            gamma: float = 0.5, 
-            **kwargs):
-        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
-        self.gamma = gamma
-    
-    @staticmethod
-    def irwin_hall_cdf(x, n):
-        if n <= 15:
-            k = np.arange(0, int(np.max(x)) + 1)[:, np.newaxis]
-            summands = np.sum((-1) ** k * special.comb(n, k) * (x - k.T) ** n, axis=0)
-            cdf = summands / np.math.factorial(n)
-        else:
-            cdf = norm.cdf(x, loc=n/2, scale=np.sqrt(n/12))
-        return cdf
-
-    def get_pvalue(self, score: float, ntoks: int, eps: float):
-        pvalue = self.irwin_hall_cdf(score, ntoks)
-        return np.maximum(pvalue, eps)
-    
-    def get_pvalues(self, scores, eps: float=1e-200):
-        scores = np.array(scores)  # Ensure scores is a NumPy array
-        ntoks = np.sum(scores > 0, axis=1)[0]  # Number of tokens per text
-        total_scores = np.sum(scores, axis=1)  # Total score per text
-        total_scores[ntoks == 0] = 1.  # Handle case where ntoks == 0
-        pvalues = self.get_pvalue(total_scores, ntoks, eps)
-        return pvalues
-
-class ImportanceSumDetectorOneList(ImportanceSumDetector):
-    def __init__(self, 
-            tokenizer: LlamaTokenizer,
-            ngram: int = 1,
-            seed: int = 0,
-            seeding: str = 'hash',
-            salt_key: int = 35317,
-            gamma: float = 0.5, 
-            green_list_key: int = 42,
-            **kwargs):
-        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
-        self.gamma = gamma
-        self.rng.manual_seed(green_list_key)
-        self.green_list = torch.randperm(self.vocab_size, generator=self.rng)[:int(self.gamma * self.vocab_size)]# gamma * n
-    
-    def score_tok(self, ngram_tokens, token_id):
-        seed = self.get_seed_rng(ngram_tokens)
-        self.rng.manual_seed(seed)
-        xi = torch.rand(1, generator=self.rng)[0]
-        greenlist = self.green_list
-        scores = torch.zeros(self.vocab_size)
-        scores += 1 - xi
-        scores[greenlist] = xi
-        return scores.roll(-token_id)
-    
-
-class ImportanceHCDetector(ImportanceSumDetector):
-    def __init__(self, 
-            tokenizer: LlamaTokenizer,
-            ngram: int = 1,
-            seed: int = 0,
-            seeding: str = 'hash',
-            salt_key: int = 35317,
-            gamma: float = 0.5,
-            **kwargs):
-        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
-        self.gamma = gamma
-        
-    @staticmethod
-    def HC_test(p):
-        """
-        Calculate the Higher Criticism (HC) threshold for a given set of p-values and determine
-        if the null hypothesis H_0 should be accepted or rejected based on the HC statistic.
-
-        Inputs:
-            p (array-like): An n-by-1 array of p-values from the data.
-
-        Outputs:
-            H (int): A scalar, "0" or "1", indicating whether H_0 is accepted ("0") or rejected ("1"),
-                    based on whether the HC threshold exceeds a critical value.
-        """
-        n_sample = len(p)
-        
-        # Sort P along the last axis (samples within each simulation)
-        P_sorted = np.sort(p)
-        
-        # Compute t/n for each possible t value, considering broadcasting
-        t_n = np.arange(1, n_sample + 1) / n_sample
-        
-        # Compute p_{(t)} - t/n for each p_{(t)} and corresponding t/n, again using broadcasting
-        difference = t_n - P_sorted
-        
-        # Compute the denominator for the HC statistic
-        denominator = np.sqrt(P_sorted * (1 - P_sorted))
-        
-        # Compute the HC+ statistic, avoiding division by zero and ensuring p_{(t)} > 1/n
-        # Use np.where to handle p_{(t)} > 1/n condition
-        valid_indices = P_sorted > 1/n_sample
-        HC_plus_values = np.where(valid_indices, np.sqrt(n_sample) * difference / denominator, 0)
-        
-        # Compute the max of HC+ values across the valid t values for each simulation
-        HC_plus = np.max(HC_plus_values)
-
-        file_path = f'HC_simulate_data/{n_sample}.pkl'
-        empirical_dist = pickle.load(open(file_path, 'rb'))
-
-        critical_value = empirical_dist['critical_value']
-
-        return HC_plus > critical_value
-
-    def get_decisions(
-            self, 
-            scores: List[np.array], 
-        ) -> np.array:
-        """
-        Get test decisions for each text.
-        Args:
-            score_lists: list of [list of scores for each token] for each text
-        Output:
-            decisions: list of test decisions
-        """
-        decisions = []
-        scores = np.asarray(scores)
-        for ss in scores:
-            ntoks = len(ss)
-            decisions.append(self.HC_test(ss) if ntoks!=0 else 0.)
-        return decisions
-    
-class ImportanceHCDetectorOneList(ImportanceHCDetector):
-    def __init__(self, 
-            tokenizer: LlamaTokenizer,
-            ngram: int = 1,
-            seed: int = 0,
-            seeding: str = 'hash',
-            salt_key: int = 35317,
-            gamma: float = 0.5, 
-            green_list_key: int = 42,
-            **kwargs):
-        super().__init__(tokenizer, ngram, seed, seeding, salt_key, **kwargs)
-        self.gamma = gamma
-        self.rng.manual_seed(green_list_key)
-        self.green_list = torch.randperm(self.vocab_size, generator=self.rng)[:int(self.gamma * self.vocab_size)]# gamma * n
-    
-    def score_tok(self, ngram_tokens, token_id):
-        seed = self.get_seed_rng(ngram_tokens)
-        self.rng.manual_seed(seed)
-        xi = torch.rand(1, generator=self.rng)[0]
-        greenlist = self.green_list
-        scores = torch.zeros(self.vocab_size)
-        scores += 1 - xi
-        scores[greenlist] = xi
-        return scores.roll(-token_id)

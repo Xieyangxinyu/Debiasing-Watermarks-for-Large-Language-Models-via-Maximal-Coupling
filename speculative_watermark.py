@@ -2,22 +2,18 @@
 Author: Yangxinyu Xie
 Date: 2024-11-07
 
-This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/detector.py
+This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/generator.py
 '''
 
-import os
+
 from utils import *
 import argparse
 import time
 import json
-
 import tqdm
 import pandas as pd
 import numpy as np
-
 import torch
-from sentence_transformers import SentenceTransformer
-
 from wm import *
 
 def get_args_parser():
@@ -35,21 +31,18 @@ def get_args_parser():
     parser.add_argument('--temperature', type=float, default=1)
     parser.add_argument('--top_p', type=float, default=1)
     parser.add_argument('--max_gen_len', type=int, default=512)
-    parser.add_argument('--one_list', default=False, action='store_true', help="uses only a single green list; only works if detection method is coupling")
-
+    
     # watermark parameters
-    parser.add_argument('--method', type=str, default='none', 
-                        help='Choose among: none (no watermarking), openai (Aaronson et al.), maryland (Kirchenbauer et al.), coupling, dipmark')
+    parser.add_argument('--method', type=str, default='coupling', 
+                        help='Choose among: openai (Aaronson et al.) and coupling')
     parser.add_argument('--method_detect', type=str, default='same',
-                        help='Statistical test to detect watermark. Choose among: openai, maryland, dipmark, coupling-max, coupling, coupling-HC')
+                        help='Statistical test to detect watermark. Choose among: openai, coupling')
     parser.add_argument('--seeding', type=str, default='hash', 
                         help='seeding method for rng key generation as introduced in https://github.com/jwkirchenbauer/lm-watermarking')
     parser.add_argument('--ngram', type=int, default=4, 
                         help='watermark context width for rng key generation')
     parser.add_argument('--gamma', type=float, default=0.5, 
                         help='gamma for maryland/coupling: proportion of greenlist tokens')
-    parser.add_argument('--delta', type=float, default=1.0, 
-                        help='delta for maryland: bias to add to greenlist tokens')
     parser.add_argument('--hash_key', type=int, default=35317, 
                         help='hash key for rng key generation')
     parser.add_argument('--scoring_method', type=str, default='none', 
@@ -78,7 +71,7 @@ def main(args):
     np.random.seed(args.seed)
 
     # build model
-    model, tokenizer, vocab_size = load_model(args.model_name)
+    model, tokenizer, vocab_size, model_large = load_model(args.model_name, large = True)
 
     for param in model.parameters():
         param.requires_grad = False
@@ -100,19 +93,10 @@ def main(args):
     print(f"Starting from {start_point}")
 
     # build watermark generator
-    if args.method == "none":
-        generator = WmGenerator(model, tokenizer)
+    if args.method == "coupling":
+        generator = SpeculativeCouplingGenerator(model = model, model_large = model_large, tokenizer = tokenizer, ngram = args.ngram, seed = args.seed, seeding = args.seeding, salt_key = args.hash_key, gamma=args.gamma, save_path = args.output_dir)
     elif args.method == "openai":
-        generator = OpenaiGenerator(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, save_path = args.output_dir)
-    elif args.method == "maryland":
-        generator = MarylandGenerator(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, delta=args.delta, save_path = args.output_dir)
-    elif args.method == "coupling":
-        if args.one_list:
-            generator = CouplingGeneratorOneList(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, save_path = args.output_dir)
-        else:
-            generator = CouplingGenerator(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, save_path = args.output_dir)
-    elif args.method == "dipmark":
-        generator = DiPMarkGenerator(model, tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, save_path = args.output_dir)
+        generator = SpeculativeOpenaiGenerator(model = model, model_large = model_large, tokenizer = tokenizer, ngram = args.ngram, seed = args.seed, seeding = args.seeding, salt_key = args.hash_key, save_path = args.output_dir)
     else:
         raise NotImplementedError("method {} not implemented".format(args.method))
 
@@ -147,42 +131,31 @@ def main(args):
 
     if args.method_detect == 'same':
         args.method_detect = args.method
-    if (not args.do_eval) or (args.method_detect not in ["openai", "maryland", "coupling", "dipmark"]):
+    if (not args.do_eval) or (args.method_detect not in ["openai", "coupling"]):
         print("method_detect not implemented")
         return
     
     # build watermark detector
     if args.method_detect == "openai":
         detector = OpenaiDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
-    elif args.method_detect == "maryland":
-        detector = MarylandDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
     elif args.method_detect == "coupling":
-        if args.one_list:
-            detector = CouplingSumDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-        else:
-            detector = CouplingSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method_detect == "dipmark":
-        detector = DiPMarkDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    # build sbert model
-    sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
-    cossim = torch.nn.CosineSimilarity(dim=0, eps=1e-6)
-    results_orig = load_results(json_path=args.prompt_path, nsamples=args.nsamples, result_key="output")
-
+        detector = CouplingSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+    
     # evaluate
     results = load_results(json_path=os.path.join(args.output_dir, f"results.jsonl"), nsamples=args.nsamples, result_key="result")
     log_stats = []
     text_index = 0
     with open(os.path.join(args.output_dir, 'scores.jsonl'), 'w') as f:
-        for text, text_orig in tqdm.tqdm(zip(results, results_orig)):
+        for text in tqdm.tqdm(results):
             scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
-            scores = detector.aggregate_scores(scores_no_aggreg)
+            if args.method_detect == "coupling-max":
+                scores = detector.aggregate_scores(scores_no_aggreg, aggregation = 'max')
+            else:
+                scores = detector.aggregate_scores(scores_no_aggreg)
             pvalues = detector.get_pvalues(scores_no_aggreg)
 
             scores = [float(s) for s in scores]
             num_tokens = [len(score_no_aggreg) for score_no_aggreg in scores_no_aggreg]
-            # compute sbert score
-            xs = sbert_model.encode([text, text_orig], convert_to_tensor=True)
-            score_sbert = cossim(xs[0], xs[1]).item()
             # log stats and write
             
             log_stat = {
@@ -190,13 +163,12 @@ def main(args):
                 'num_token': num_tokens[0],
                 'score': scores[0],
                 'pvalue': pvalues[0], 
-                'score_sbert': score_sbert
             }
             log_stats.append(log_stat)
             f.write(json.dumps(log_stat)+'\n')
             text_index += 1
         df = pd.DataFrame(log_stats)
-        
+        #df['log10_pvalue'] = np.log10(df['pvalue'])
         print(f">>> Scores: \n{df.describe(percentiles=[])}")
     with open(os.path.join(args.output_dir, 'summary.txt'), 'w') as f:
         f.write(f"{df.describe(percentiles=[])}"+'\n')
@@ -204,7 +176,6 @@ def main(args):
         # Compute True Positive Rate
         TPR = sum(df['pvalue'] < 0.01) / len(df)
         f.write(f'TPR: {TPR}'+'\n')
-    
 
 if __name__ == "__main__":
     args = get_args_parser().parse_args()

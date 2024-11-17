@@ -1,8 +1,9 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
+'''
+Author: Yangxinyu Xie
+Date: 2024-11-07
 
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
+This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/detector.py
+'''
 
 import argparse
 from typing import List
@@ -14,39 +15,36 @@ import pandas as pd
 import numpy as np
 
 import torch
-from transformers import AutoTokenizer
 
 from wm import *
-import utils
+from utils import *
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Args', add_help=False)
 
     # model parameters
     parser.add_argument('--json_path', type=str, required=True)
-    parser.add_argument('--text_key', type=str, default='text',
+    parser.add_argument('--text_key', type=str, default='result',
                         help='key to access text in json dict')
-    parser.add_argument('--tokenizer', type=str, default='opt')
+    parser.add_argument('--tokenizer', type=str, default='phi')
 
     # watermark parameters
-    parser.add_argument('--do_wmeval', type=utils.bool_inst, default=True,
-                        help='whether to do watermark evaluation')
-    parser.add_argument('--method', type=str, default='none',
+    parser.add_argument('--method', type=str, default='coupling',
                         help='watermark detection method')
     parser.add_argument('--seeding', type=str, default='hash', 
                         help='seeding method for rng key generation as introduced in https://github.com/jwkirchenbauer/lm-watermarking')
     parser.add_argument('--ngram', type=int, default=4, 
                         help='watermark context width for rng key generation')
-    parser.add_argument('--gamma', type=float, default=0.25, 
+    parser.add_argument('--gamma', type=float, default=0.5, 
                         help='gamma for maryland: proportion of greenlist tokens')
     parser.add_argument('--hash_key', type=int, default=35317, 
                         help='hash key for rng key generation')
-    parser.add_argument('--scoring_method', type=str, default='none', 
+    parser.add_argument('--scoring_method', type=str, default='v2', 
                         help='method for scoring. choose between: \
                         none (score every tokens), v1 (score token when wm context is unique), \
                         v2 (score token when {wm context + token} is unique')
-    parser.add_argument('--one_list', default=False, action='store_true', help="uses only a single green list; only works if detection method is importance-sum")
-    parser.add_argument('--alpha', type=float, default=0.0001)
+    parser.add_argument('--one_list', default=False, action='store_true', help="uses only a single green list; only works if detection method is coupling")
+    parser.add_argument('--alpha', type=float, default=0.01)
     
     # attack
     parser.add_argument('--attack_name', type=str, default='none',
@@ -88,30 +86,30 @@ def main(args):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    if args.tokenizer == 'llama':
-        tokenizer = AutoTokenizer.from_pretrained('princeton-nlp/Sheared-LLaMA-2.7B')
-        vocab_size = 32000
-    else:
-        tokenizer = AutoTokenizer.from_pretrained('facebook/opt-1.3b')
-        vocab_size = 50272
+    tokenizer, vocab_size = load_tokenizer(args.tokenizer)
 
     # build watermark detector
     if args.method == "openai":
         detector = OpenaiDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
     elif args.method == "maryland":
         detector = MarylandDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method == "importance-max":
-        detector = ImportanceMaxDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method == "importance-sum":
-        if args.one_list:
-            detector = ImportanceSumDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+    elif args.method == "dipmark":
+        detector = DiPMarkDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+    elif "coupling" in args.method:
+        if args.method == "coupling-max":
+            detector = CouplingMaxDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
+        elif args.method == "coupling-HC":
+            if args.one_list:
+                detector = CouplingHCDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
+            else:
+                detector = CouplingHCDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
         else:
-            detector = ImportanceSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-    elif args.method == "importance-HC":
-        if args.one_list:
-            detector = ImportanceHCDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
-        else:
-            detector = ImportanceHCDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, gamma=args.gamma, vocab_size = vocab_size)
+            if args.one_list:
+                detector = CouplingSumDetectorOneList(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
+            else:
+                detector = CouplingSumDetector(tokenizer, args.ngram, args.seed, args.seeding, args.hash_key, vocab_size = vocab_size)
+    
+    
 
     # load results and (optional) do splits
     results = load_results(json_path=f'{args.json_path}/results.jsonl', text_key=args.text_key, nsamples=args.nsamples)
@@ -146,37 +144,43 @@ def main(args):
         log_stat = {
             'text_index': ii,
         }
-        if args.do_wmeval:
-            if args.method == "importance-max":
-                scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
-                scores = detector.aggregate_scores(scores_no_aggreg, aggregation = 'max')
-                pvalues = detector.get_pvalues(scores_no_aggreg)
-            elif args.method == "importance-HC":
-                scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
-                decisions = detector.get_decisions(scores_no_aggreg)
-            else:
-                scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
-                scores = detector.aggregate_scores(scores_no_aggreg) # p 1
-                pvalues = detector.get_pvalues(scores_no_aggreg) 
+        if args.method == "coupling-max":
+            scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
+            scores = detector.aggregate_scores(scores_no_aggreg, aggregation = 'max')
+            pvalues = detector.get_pvalues(scores_no_aggreg)
+        elif args.method == "coupling-HC":
+            scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
+            decisions = detector.get_decisions(scores_no_aggreg)
+        else:
+            scores_no_aggreg = detector.get_scores_by_t([text], scoring_method=args.scoring_method)
+            scores = detector.aggregate_scores(scores_no_aggreg) # p 1
+            pvalues = detector.get_pvalues(scores_no_aggreg) 
 
-            num_tokens = [len(score_no_aggreg) for score_no_aggreg in scores_no_aggreg]
-            log_stat['num_token'] =  num_tokens[0]
-            if args.method == "importance-HC":
-                log_stat['decision'] = decisions[0]
-            else:
-                scores = [float(s) for s in scores]
-                log_stat['score'] =  scores[0]
-                log_stat['pvalue'] =  pvalues[0]
-            log_stats.append(log_stat)
-    
+        num_tokens = [len(score_no_aggreg) for score_no_aggreg in scores_no_aggreg]
+        log_stat['num_token'] =  num_tokens[0]
+        if args.method == "coupling-HC":
+            log_stat['decision'] = decisions[0]
+        else:
+            scores = [float(s) for s in scores]
+            log_stat['score'] =  scores[0]
+            log_stat['pvalue'] =  pvalues[0]
+        log_stats.append(log_stat)
 
 
     df = pd.DataFrame(log_stats)
-    if args.method == "importance-HC":
+    if args.method == "coupling-HC":
         TPR = sum(df['decision']) / len(df)
     else:
         TPR = sum(df['pvalue'] < args.alpha) / len(df)
     print(f'TPR: {TPR} out of {len(df)} texts.')
+    with open(os.path.join(args.json_path, 'summary.txt'), "a") as f:
+        f.write(json.dumps({
+            "alpha": args.alpha,
+            "attack_name": attack_name,
+            "method": args.method,
+            "TPR": TPR,
+            "num_texts": len(df),
+        }) + "\n")
 
 
 if __name__ == "__main__":

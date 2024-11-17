@@ -1,11 +1,3 @@
-'''
-Author: Yangxinyu Xie
-Date: 2024-11-07
-
-All rights reserved.
-'''
-
-
 from .coupling import CouplingGenerator
 from .generator import OpenaiGenerator, WmGenerator, ContextMasking
 from transformers import AutoModelForCausalLM

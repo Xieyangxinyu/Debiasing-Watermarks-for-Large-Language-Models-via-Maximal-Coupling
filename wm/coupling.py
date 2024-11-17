@@ -1,10 +1,3 @@
-'''
-Author: Yangxinyu Xie
-Date: 2024-11-07
-
-All rights reserved.
-'''
-
 from .generator import OpenaiGenerator
 from .detector import WmDetector
 from typing import List

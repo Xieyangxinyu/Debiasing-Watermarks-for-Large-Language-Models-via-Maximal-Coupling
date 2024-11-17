@@ -1,10 +1,3 @@
-'''
-Author: Yangxinyu Xie
-Date: 2024-11-07
-
-This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/generator.py
-'''
-
 
 from utils import *
 import argparse

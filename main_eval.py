@@ -1,10 +1,3 @@
-'''
-Author: Yangxinyu Xie
-Date: 2024-11-07
-
-This code is adapted from https://github.com/facebookresearch/three_bricks/blob/main/wm/detector.py
-'''
-
 import argparse
 from typing import List
 import os

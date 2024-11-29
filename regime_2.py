@@ -1,10 +1,3 @@
-'''
-Author: Yangxinyu Xie
-Date: 2024-11-07
-
-All rights reserved.
-'''
-
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm

@@ -333,15 +333,16 @@ class MarylandGenerator(WmGenerator):
         - use the seed to partition the vocabulary into greenlist (gamma*V words) and redlist 
         - add delta to greenlist words' logits
         """
+        # apply temperature
+        logits = logits.clone() / temperature
         if not off:
             logits_watermarked = self.logitprobsrocessor(logits, ngram_seeds)
             logits = self.context_masking.apply_repeated_context_masking(logits, logits_watermarked, ngram_seeds)
-        return super().get_sampling_prob_vector(logits, temperature, top_p, ngram_seeds, off)
+        return super().get_sampling_prob_vector(logits, 1, top_p, ngram_seeds, off)
 
     def logitprobsrocessor(self, logits, ngram_seeds):
         """Process logits to mask out words in greenlist."""
         _, vocab_size = logits.shape
-        logits = logits.clone()
         for ii in range(ngram_seeds.shape[0]): # batch of texts
             seed = ngram_seeds[ii].item()
             self.rng.manual_seed(seed)

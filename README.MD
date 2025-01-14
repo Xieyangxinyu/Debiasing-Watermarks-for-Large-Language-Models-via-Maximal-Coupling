@@ -1,6 +1,6 @@
 # Unbiased Watermark via Maximal Coupling
 
-This repository reproduces the results reported in [Unbiased Watermark via Maximal Coupling](https://arxiv.org/abs/2411.11203).
+This repository reproduces the results reported in [Debiasing Watermarks for Large Language Models via Maximal Coupling](https://arxiv.org/abs/2411.11203).
 
 ## Requirements
 First, install [PyTorch](https://pytorch.org/get-started/locally/). The remaining dependency can be installed using the following command:

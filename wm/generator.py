@@ -280,6 +280,7 @@ class OpenaiGenerator(WmGenerator):
         super().__init__(*args, **kwargs)        
 
     def apply_watermarking(self, probs, ngram_seeds):
+        probs = probs.clone()
         vocab_size = probs.shape[-1]
         for ii in range(ngram_seeds.shape[0]): # batch of texts
             # seed with hash of ngram tokens
@@ -383,6 +384,7 @@ class DiPMarkGenerator(OpenaiGenerator):
         Reweight the probabilities.
         The difference from MarylandGenerator is that the set of green tokens is defined as the latter (gamma*V words) of the permuted vocabulary.
         """
+        probs = probs.clone()
         shuffle = self.get_shuffle(ngram_seeds, probs.shape[-1])
         unshuffle = torch.argsort(shuffle, dim=-1)
 

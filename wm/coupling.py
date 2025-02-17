@@ -23,6 +23,7 @@ class CouplingGenerator(OpenaiGenerator):
         return green_list
 
     def apply_watermarking(self, probs, ngram_seeds):
+        probs = probs.clone()
         _, vocab_size = probs.shape
         green_mask = torch.zeros_like(probs).to(probs.device)
         zeta = torch.zeros(ngram_seeds.shape[0]).to(probs.device)

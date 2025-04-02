@@ -1,4 +1,4 @@
-# Unbiased Watermark via Maximal Coupling
+# Debiasing Watermarks for Large Language Models via Maximal Coupling
 
 This repository reproduces the results reported in [Debiasing Watermarks for Large Language Models via Maximal Coupling](https://arxiv.org/abs/2411.11203).
 
@@ -110,4 +110,19 @@ python speculative_watermark.py \
             --batch_size 16
 ```
 
-7. The code for simulation studies are included in `regime_1.py` and `regime_2.py`, corresponding to the two scenarios discussed in the paper.
+7. To run the paraphrasing attack, run `paraphrase_attack.py`. It will create a folder called `paraphrase` in the current directory, which contains the paraphrased text. Then, you can run `main_eval.py` with the appropriate command-line arguments to evaluate the watermarking method against the paraphrased text. For example,
+```cmd
+python main_eval.py \
+        --tokenizer phi \
+        --json_path paraphrase/finance_qa/phi/coupling/ngram_4 \
+        --text_key result \
+        --method coupling \
+        --seeding hash \
+        --ngram 4 \
+        --scoring_method v2 \
+        --alpha 0.01
+```
+
+8. To create the tables in the paper, please follow the instructions at the end of `pull_results.py`. The corresponding tables will be printed in the terminal. 
+
+9. The code for simulation studies are included in `regime_1.py` and `regime_2.py`, corresponding to the two scenarios discussed in the paper. This code will generate the simulation figures in the paper. 

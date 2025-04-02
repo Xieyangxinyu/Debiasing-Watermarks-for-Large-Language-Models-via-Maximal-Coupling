@@ -20,7 +20,7 @@ def get_args_parser():
     parser.add_argument('--model_name', type=str, default='llama')
 
     # prompts parameters
-    parser.add_argument('--prompt_path', type=str, default="data/longform_qa.json")
+    parser.add_argument('--prompt_path', type=str, default="data/finance_qa_llama.json")
     parser.add_argument('--prompt', type=str, nargs='+', default=None, 
                         help='prompt to use instead of prompt_path, can be a list')
 

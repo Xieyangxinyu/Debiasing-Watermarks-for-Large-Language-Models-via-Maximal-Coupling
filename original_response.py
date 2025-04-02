@@ -3,7 +3,7 @@ import argparse
 import time
 import json
 import numpy as np
-
+import os
 import torch
 
 from wm import WmGenerator

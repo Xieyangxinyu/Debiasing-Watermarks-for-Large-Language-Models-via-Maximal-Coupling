@@ -6,7 +6,7 @@ This repository reproduces the results reported in [Debiasing Watermarks for Lar
 # Table of Contents
 - [Online Appendix to the Paper](/supplementary.pdf)
 - [data folder](/data/)
-- [Reproducing Results](#reproducing-results-in-the-paper)
+- [Reproducing Results in Python](#reproducing-results-in-the-paper)
   - [Requirements](#requirements)
   - [Models](#models)
   - [Data](#data)

@@ -1,6 +1,6 @@
 # Debiasing Watermarks for Large Language Models via Maximal Coupling
 
-This repository reproduces the results reported in [Debiasing Watermarks for Large Language Models via Maximal Coupling](https://arxiv.org/abs/2411.11203).
+This repository reproduces the results reported in [Debiasing Watermarks for Large Language Models via Maximal Coupling](https://arxiv.org/abs/2411.11203), accepted at Journal of American Statistical Association (JASA) Special Issue on Statistical Science in AI. The following content guides you through the process of reproducing the results in the paper using Python.
 
 
 # Table of Contents

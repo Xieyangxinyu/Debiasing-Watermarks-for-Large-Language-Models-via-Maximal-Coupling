@@ -2,6 +2,19 @@
 
 This repository reproduces the results reported in [Debiasing Watermarks for Large Language Models via Maximal Coupling](https://arxiv.org/abs/2411.11203).
 
+
+# Table of Contents
+- [Online Appendix to the Paper](/supplementary.pdf)
+- [data folder](/data/)
+- [Reproducing Results](#reproducing-results-in-the-paper)
+  - [Requirements](#requirements)
+  - [Models](#models)
+  - [Data](#data)
+  - [Usage](#usage)
+
+
+# Reproducing Results in the Paper
+
 ## Requirements
 First, install [PyTorch](https://pytorch.org/get-started/locally/). The remaining dependency can be installed using the following command:
 ```

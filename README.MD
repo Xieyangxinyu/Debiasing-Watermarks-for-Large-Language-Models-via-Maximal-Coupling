@@ -22,6 +22,8 @@ pip install -r requirements.txt
 ```
 This codebase was adapted from [three_bricks](https://github.com/facebookresearch/three_bricks) and developed with python version 3.11, PyTorch version 2.1.1, CUDA 12.0. However, we do not support multi-bit watermarking in our code.
 
+All experiments were run on NVIDIA A100-SXM4 GPUs with 40GB of VRAM on [Polaris Compute Nodes](https://docs.alcf.anl.gov/polaris/running-jobs/using-gpus/) at Argonne National Laboratory. The code is designed to be run on a single GPU, but it can be adapted for multi-GPU setups if needed.
+
 ## Models
 
 We use two instruction fine-tuned models: [phi-3](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct) and [Llama-3.2](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct). In all our codes, `{model_name}` are either `phi` or `llama`, referring to these two models.

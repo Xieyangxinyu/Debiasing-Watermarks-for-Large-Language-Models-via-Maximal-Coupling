@@ -47,7 +47,7 @@ You can reproduce the results of the paper by the following steps:
 - `--method`: Choose a watermarking method for text generation. phiions: "none" (no watermarking), "openai" (Aaronson et al.), "maryland" ([Kirchenbauer et al.](https://arxiv.org/abs/2301.10226)), "dipmark" ([Wu et al.](https://arxiv.org/abs/2310.07710)), "coupling" which is our method. Default value: "none."
 - `--method_detect`: Choose a statistical test to detect watermark. "same" uses the grounded statistical test with the same method as for generation. The other phiions are "openai", "maryland", "coupling-max", "coupling". Default value: "same." For our proposed method, please use "coupling".
 - `--one_list`: Use only a single green list; only works if detection method is coupling. See details in the Appendix of the paper.
-- `--scoring_method`: Method for scoring tokens. phiions: "none" (score every token), "v1" (score token when the watermark context is unique), "v2" (score token when {wm context + token} is unique). Default value: "none." We use "v2" for all our experiments.
+- `--scoring_method`: Method for scoring tokens. options: "none" (score every token), "v1" (score token when the watermark context is unique), "v2" (score token when {wm context + token} is unique). Default value: "none." We use "v2" for all our experiments.
 - `--ngram`: Watermark context width for RNG key generation. Default value: 4. We use either 2 or 4 for all our experiments.
 - `--gamma`: Size of the green lists.
 
